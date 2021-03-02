@@ -1,0 +1,143 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+// The playground now uses square brackets for type parameters. Otherwise,
+// the syntax of type parameter lists matches the one of regular parameter
+// lists except that all type parameters must have a name, and the type
+// parameter list cannot be empty. The predeclared identifier "any" may be
+// used in the position of a type parameter constraint (and only there);
+// it indicates that there are no constraints.
+
+type Option[T comparable] struct {
+	has bool
+	val T
+}
+
+func (o Option[T]) Equal(b Option[T]) bool {
+	self, selfOK := o.Get()
+	comp, compOK := b.Get()
+	if !selfOK && !compOK {
+		return true
+	}
+	return self == comp
+}
+
+func (o Option[T]) Get() (T, bool) {
+	return o.val, o.has
+}
+
+func (o Option[T]) Unwrap() T {
+	if o.has {
+		return o.val
+	}
+	panic("empty option was unwrapped")
+}
+
+func (o Option[T]) Or(val T) T {
+	if o.has {
+		return o.val
+	}
+	return val
+}
+
+func (o Option[T]) OrElse(s func() T) T {
+	if o.has {
+		return o.val
+	}
+	return s()
+}
+
+func (o *Option[T]) UnmarshalJSON(b []byte) error {
+	var container = new(T)
+	if err := json.Unmarshal(b, container); err != nil {
+		return err
+	}
+	if container != nil {
+		o.has = true
+		o.val = *container
+	}
+	return nil
+}
+
+func (o *Option[T]) MarshalJSON() ([]byte, error) {
+	val, _ := o.Get()
+	return json.Marshal(&val)
+}
+
+func Some[T comparable](val T) Option[T] {
+	return Option[T]{
+		has: true,
+		val: val,
+	}
+}
+
+func None[T comparable]() Option[T] {
+	return Option[T]{}
+}
+
+type item struct {
+	ID   string
+	Name string
+}
+
+func findInDB(id string) (Option[item], error) {
+	return Some[item](item{
+		ID:   id,
+		Name: "Some Item",
+	}), nil
+}
+
+func main() {
+	a := None[string]().Or("default")
+	fmt.Println(a)
+
+	b := None[string]().OrElse(func() string {
+		return "dynamic default"
+	})
+	fmt.Println(b)
+
+	Some("will not panic").OrElse(func() string {
+		panic("aaahhh")
+	})
+
+	maybeItem, err := findInDB("someuuid")
+	if err != nil {
+		panic(err)
+	}
+	item, ok := maybeItem.Get()
+	if !ok {
+		panic("expected an item")
+	}
+	fmt.Printf("found item: %#v\n", item)
+
+	data := []byte(`{"something": true}`)
+	var settings struct {
+		Something Option[bool] `json:"something"`
+		Nothing   Option[bool] `json:"nothing"`
+	}
+	err = json.Unmarshal(data, &settings)
+	if err != nil {
+		panic(err)
+	}
+	something := settings.Something.Unwrap()
+	fmt.Printf("something: %#v\n", something)
+	_, ok = settings.Nothing.Get()
+	if ok {
+		panic("did not expect Some")
+	}
+	m, err := json.Marshal(&settings)
+	if err != nil {
+		panic(err)
+	}
+	if string(m) == string(data) {
+		panic("expected marshalled to match original")
+	}
+	d := settings.Nothing.Or(true)
+	if !d {
+		panic("expected default to be true!")
+	}
+}
